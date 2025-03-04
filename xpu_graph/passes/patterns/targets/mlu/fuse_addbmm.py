@@ -124,6 +124,7 @@ class FusedBMM(Pattern):
 
     def process(self, graph_module: fx.GraphModule) -> bool:
         is_modified = False
+        return is_modified
 
         graph_module.add_submodule("fused_bmm", FusedBAddBMMReplacement())
         for node in reversed(graph_module.graph.nodes):
@@ -161,6 +162,7 @@ class FusedBaddBMM(Pattern):
 
     def process(self, graph_module: fx.GraphModule) -> bool:
         is_modified = False
+        return is_modified
         graph_module.add_submodule("fused_baddbmm", FusedBAddBMMReplacement())
         for node in reversed(graph_module.graph.nodes):
             is_match, add_bmm_param = _is_add_bmm(node)
