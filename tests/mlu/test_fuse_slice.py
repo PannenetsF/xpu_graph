@@ -436,10 +436,32 @@ def fn15(x):
         input_list.append(x[:, index : index + 32] + 1)
     return input_list
 
+def fn16(x):
+    tmp_Test = [
+        12573,
+        11984,
+        11562,
+        9782,
+        9727,
+        9745,
+        9763,
+        9773,
+        9805,
+        9822,
+        10283,
+        10736,
+    ]
+    input_list = []
+    for index in tmp_Test:
+        input_list.append(x[:, :, index : index + 4] + 1)
+    return input_list
 
 def slice_test(xpu_graph_backend, func):
     for batch in (10, 512, 256, 128, 64, 32):
-        a = torch.randn(batch, 43106).to(device=device)
+        if func in [fn16]:
+            a = torch.randn(batch, 12, 43106).to(device=device)
+        else:
+            a = torch.randn(batch, 43106).to(device=device)
         compiled = torch.compile(func, backend=xpu_graph_backend, dynamic=False)
         res = compiled(a)[0]
         res1 = func(a)[0]
@@ -478,7 +500,7 @@ class TestSlice:
 
 if __name__ == "__main__":
     xpu_graph_backend = xpu_graph.mlu_compiler(
-        is_training=False, freeze=True, opt_level=OptLevel.level2
+        is_training=True, freeze=True, opt_level=OptLevel.level2
     )
     slice_test(xpu_graph_backend, fn0)
     slice_test(xpu_graph_backend, fn1)
@@ -494,4 +516,4 @@ if __name__ == "__main__":
     slice_test(xpu_graph_backend, fn12)
     slice_test(xpu_graph_backend, fn13)
     slice_test(xpu_graph_backend, fn14)
-    slice_test(xpu_graph_backend, fn15)
+    slice_test(xpu_graph_backend, fn16)

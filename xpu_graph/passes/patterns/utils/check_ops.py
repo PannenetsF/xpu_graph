@@ -124,6 +124,8 @@ def check_meta_2d(node: fx.Node) -> bool:
 def get_shape(node: fx.Node):
     return node.meta["tensor_meta"].shape
 
+def get_node_dim(node: fx.Node):
+    return len(node.meta["tensor_meta"].shape)
 
 def get_dtype(node: fx.Node):
     return node.meta["tensor_meta"].dtype

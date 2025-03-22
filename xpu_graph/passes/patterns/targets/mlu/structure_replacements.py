@@ -10,9 +10,11 @@ from .triton_kernel.fused_slice_cat import (
     fused_slice_cat,
 )
 
+
 class RMSNormModule(torch.nn.Module):
     def forward(self, inputs, weights, epsilon):
         import torch_mlu_ops
+
         return torch_mlu_ops.fused_rms_norm(
             inputs, None, weights, None, None, epsilon, False
         )
@@ -20,6 +22,13 @@ class RMSNormModule(torch.nn.Module):
 
 class FuseSliceModule(torch.nn.Module):
     def forward(self, input_tensor, slices_index, slice_len):
+        is_3d = False
+        s1 = s2 = 0
+        if len(input_tensor.shape) == 3:
+            is_3d = True
+            s1, s2, s3 = input_tensor.shape
+            input_tensor = input_tensor.view(-1, s3)
+
         if len(input_tensor.shape) != 2:
             raise NotImplementedError("input must be 2d")
         if slice_len > input_tensor.shape[-1]:
@@ -36,7 +45,10 @@ class FuseSliceModule(torch.nn.Module):
             input_tensor.shape[0],
             input_tensor.stride(0),
         )
-        return output.view(len(slices_index), input_tensor.shape[0], slice_len)
+        if is_3d:
+            return output.view(len(slices_index), s1, s2, slice_len)
+        else:
+            return output.view(len(slices_index), input_tensor.shape[0], slice_len)
 
 
 class FuseSliceCatSameInputModule(torch.nn.Module):
