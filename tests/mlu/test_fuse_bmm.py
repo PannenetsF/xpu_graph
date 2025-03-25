@@ -4,7 +4,11 @@ import torch_mlu
 import xpu_graph
 from xpu_graph.config import OptLevel
 import torch.nn.functional as F
-from xpu_graph.test_utils import assertTensorsEqual
+from xpu_graph.test_utils import (
+    assertTensorsEqual,
+    need_xpu_graph_logs,
+    skip_xpu_graph_cache,
+)
 
 device = "mlu:0"
 data_type = torch.float16

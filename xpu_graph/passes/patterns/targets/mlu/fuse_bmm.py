@@ -3,7 +3,6 @@ from typing import Optional, Tuple, Union
 import torch
 from torch import nn, fx
 import torch_mlu
-import torch_mlu_ops
 from xpu_graph.utils import logger
 from xpu_graph.config import OptLevel
 from xpu_graph.passes.patterns.pattern import Pattern
@@ -108,6 +107,7 @@ class FusedBMMReplacement(nn.Module):
     def forward(
         self, inputs, input_shape, weight, weight_shape, trans_b, residual, beta, bias, dtype, act, shape_param
     ):
+        import torch_mlu_ops
         if not inputs.is_contiguous():
             inputs = inputs.contiguous()
         if not weight.is_contiguous():
