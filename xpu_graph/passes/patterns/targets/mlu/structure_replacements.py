@@ -63,5 +63,6 @@ def get_structure_replacements():
         "FusedRMSNorm": RMSNormModule,
         "FusedSlice": FuseSliceModule,
         "FusedCatSlice": FuseSliceCatSameInputModule,
+        "FusedSliceStackSum": FuseSliceCatSameInputModule,
         "FusedMultipleSliceCat": FuseSliceCatSameInputModule,
     }
