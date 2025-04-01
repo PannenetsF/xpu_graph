@@ -10,9 +10,11 @@ from .triton_kernel.fused_slice_cat import (
     fused_slice_cat,
 )
 
+
 class RMSNormModule(torch.nn.Module):
     def forward(self, inputs, weights, epsilon):
         import torch_mlu_ops
+
         return torch_mlu_ops.fused_rms_norm(
             inputs, None, weights, None, None, epsilon, False
         )
@@ -33,10 +35,25 @@ class FuseSliceModule(torch.nn.Module):
             input_tensor,
             slices_index,
             slice_len,
-            input_tensor.shape[0],
-            input_tensor.stride(0),
         )
-        return output.view(len(slices_index), input_tensor.shape[0], slice_len)
+        return output
+
+
+class FuseSplitModule(torch.nn.Module):
+    def forward(self, x: torch.Tensor, split_size: int, dim: int):
+        if len(x.shape) != 2:
+            raise NotImplementedError("input must be 2d")
+        split_num = x.shape[1] // split_size
+        if split_num * split_size != x.shape[1]:
+            raise NotImplementedError("fused split don't support.")
+        slices_index = list(range(0, x.shape[1], split_size))
+        start_indices = torch.tensor(slices_index, device=x.device, dtype=torch.int32)
+        output = fused_slice_low(
+            x,
+            start_indices,
+            split_size,
+        )
+        return output.unbind(0)
 
 
 class FuseSliceCatSameInputModule(torch.nn.Module):
@@ -62,6 +79,7 @@ def get_structure_replacements():
     return {
         "FusedRMSNorm": RMSNormModule,
         "FusedSlice": FuseSliceModule,
+        "FusedSplit": FuseSplitModule,
         "FusedCatSlice": FuseSliceCatSameInputModule,
         "FusedMultipleSliceCat": FuseSliceCatSameInputModule,
     }
