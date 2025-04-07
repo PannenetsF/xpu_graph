@@ -22,88 +22,111 @@ class FusedSliceWhereCatReplacement(nn.Module):
         where_input,
         slice_input,
         zeros_param,
-        unmatched_nodes,
-        cat_dim,
-        slice_dim,
         slice_params
     ):
         slice_param_tensor = torch.tensor(slice_params, dtype=torch.int32, device=where_input.device)
         slice_num = int(len(slice_params))
-
         cat_matched = fuse_slice_where_cat(where_input, slice_input, slice_param_tensor, zeros_param[1], slice_num)
 
-        if unmatched_nodes:
-            unmatched_nodes = unmatched_nodes + [cat_matched]
-            output = torch.cat(unmatched_nodes, dim=cat_dim)
-            return output
-        else:
-            return cat_matched
+        return cat_matched
 
-def find_matching_nodes(cat_node):
+def flatten_recursive(lst):
+    for item in lst:
+        if isinstance(item, (list, tuple)):
+            yield from flatten_recursive(item)
+        else:
+            yield item
+
+def get_key(node, is_change_stack):
+    if (
+        not hasattr(node, "args")
+        or len(node.args) != 3
+        or (len(node.users) > 1) and not (len(node.users) == 2 and is_change_stack)
+        or not check_where_op(node)
+    ):
+        return None
+
+    cond, x, y = node.args
+    if (
+        not check_zeros_op(x)
+        or not check_slice_op(y)
+        or (y.args[1] != 1 and y.args[1] != -1)
+    ):
+        return None
+
+    if (
+        not hasattr(cond, "meta") or "tensor_meta" not in cond.meta
+        or not hasattr(y, "meta") or "tensor_meta" not in y.meta
+    ):
+        return None
+
+    cond_shape = cond.meta["tensor_meta"].shape
+    y_shape = y.meta["tensor_meta"].shape
+    if len(cond_shape) != 2 or cond_shape[1] != 1 or len(y_shape) != 2:
+        return None
+
+    return (cond, x.args[0], y.args[0]), y.args[2]
+
+def group_similar_where_nodes(cat_node, is_change_stack):
     cat_inputs = cat_node.args[0]
-    last_input = cat_inputs[-1]
+    groups = []
+    match_group, slice_params = [], []
+    unmatched_group = []
+    last_key = None
 
-    if not check_where_op(last_input):
-        return False, ()
-    matched_nodes = [last_input]
-    
-    if not hasattr(last_input, "args") or len(last_input.args) != 3:
-        return False, ()
+    def flush_group():
+        nonlocal match_group, slice_params
+        if match_group:
+            groups.append((match_group, slice_params))
+            match_group, slice_params = [], []
 
-    condition, x, y = last_input.args[:3]
-    if not check_zeros_op(x):
-        return False, ()
-    if not check_slice_op(y):
-        return False, ()
+    def flush_unmatched():
+        nonlocal unmatched_group
+        if unmatched_group:
+            groups.append((unmatched_group,))
+            unmatched_group = []
 
-    zeros_param = x.args[0]
-    slice_input = y.args[0]
-    slice_dim = y.args[1]
-    slice_params = [y.args[2]]
+    for node in cat_inputs:
+        result = get_key(node, is_change_stack)
+        if result is None:
+            flush_group()
+            unmatched_group.append(node)
+            continue
 
-    for node in reversed(cat_inputs[:-1]):
-        if not hasattr(node, "args") or len(node.args) != 3:
-            break
-        if not check_where_op(node):
-            break
-        condition_, x_, y_ = node.args[:3]
-        if not check_slice_op(y_):
-            break
+        key, param = result
+        if key != last_key:
+            flush_group()
+        flush_unmatched()
 
-        if condition_ == condition and x_ == x and y_.args[0] == y.args[0] and y_.args[1] == y.args[1] == 1:
-            matched_nodes.append(node)
-            slice_params.append(y_.args[2])
-        else:
-            break
+        match_group.append(node)
+        slice_params.append(param)
+        last_key = key
 
-    if len(matched_nodes) < 2:
-        return False, ()
-
-    unmatched_nodes = [node for node in cat_inputs if node not in matched_nodes[::-1]]
-    return True, (condition, slice_input, zeros_param, unmatched_nodes, slice_dim, slice_params[::-1])
+    flush_group()
+    flush_unmatched()
+    return groups
 
 def _is_slice_where_cat(
     node: fx.Node,
+    is_change_stack: bool,
 ) -> tuple[bool, Optional[fx.Node], Optional[fx.Node], Optional[fx.Node]]:
     is_cat, cat_dim = check_cat_op(node)
     if not is_cat:
         return False, (), ()
-    is_match, param_tuple = find_matching_nodes(node)
-    if not is_match:
-        return False, (), ()
-
-    where_input_shape = param_tuple[0].meta["tensor_meta"].shape
-    slice_input_shape = param_tuple[1].meta["tensor_meta"].shape
-    if len(where_input_shape) != 2 or len(slice_input_shape) != 2:
-        return False, (), ()
-    if where_input_shape[1] != 1:
-        return False, (), ()
     if cat_dim != 1 and cat_dim != -1:
         return False, (), ()
-    if param_tuple[4] != 1 and param_tuple[4] != -1:
-        return False, (), ()
 
-    return True, param_tuple, cat_dim
+    groups = group_similar_where_nodes(node, is_change_stack)
+    group_index = []
+    for i in range(len(groups)):
+        if len(groups[i]) > 1:
+            if len(groups[i][0]) > 1:
+                group_index.append(i)
+            else:
+                groups[i] = groups[i][0]
+    if len(group_index) < 1:
+        return False, (), ()
+    return True, groups, group_index
 
 def _is_stack_to_cat(
     node: fx.Node,
@@ -114,7 +137,7 @@ def _is_stack_to_cat(
     cat_inputs = node.args[0]
     last_input = cat_inputs[-1]
     stack_inputs = []
-    if len (last_input.users) == 1:
+    if len(last_input.users) == 1:
         return False, ()
     for key, _ in last_input.users.items():
         if check_stack_op(key) and len(key.args) == 1 and key.args[0] == cat_inputs:
@@ -131,27 +154,13 @@ class FusedSliceWhereCat(Pattern):
         graph_module.add_submodule("mlu_triton_slice_where_cat_replacement", FusedSliceWhereCatReplacement())
         for node in reversed(graph_module.graph.nodes):
             is_change_stack, stack_params = _is_stack_to_cat(node)
-            is_match, param_tuple, cat_dim = _is_slice_where_cat(node)
+            is_match, groups, group_index = _is_slice_where_cat(node, is_change_stack)
             if is_match:
-                (
-                    where_input,
-                    slice_input,
-                    zeros_param,
-                    unmatched_nodes,
-                    slice_dim,
-                    slice_params
-                ) = param_tuple
-
                 if is_change_stack:
                     with graph_module.graph.inserting_before(stack_params[0]):
-                        cat_node = graph_module.graph.call_function(
-                            torch.ops.aten.cat.default,
-                            args=(stack_params[1], -1),
-                            kwargs={},
-                        )
                         reshape_node = graph_module.graph.call_function(
                             torch.ops.aten.view.default,
-                            args=(cat_node, [stack_params[2][0], stack_params[3], stack_params[2][1]]),
+                            args=(node, [stack_params[2][0], stack_params[3], stack_params[2][1]]),
                             kwargs={},
                         )
                         permute_node = graph_module.graph.call_function(
@@ -162,21 +171,27 @@ class FusedSliceWhereCat(Pattern):
                         stack_params[0].replace_all_uses_with(permute_node)
                         graph_module.graph.erase_node(stack_params[0])
 
+                for i in range(len(group_index)):
+                    cond, x, y = groups[group_index[i]][0][0].args
+                    slice_params = groups[group_index[i]][1]
+                    with graph_module.graph.inserting_before(node):
+                        new_node = graph_module.graph.call_module(
+                            "mlu_triton_slice_where_cat_replacement",
+                            args=(
+                                cond,
+                                y.args[0],
+                                x.args[0],
+                                slice_params
+                            ),
+                        )
+                        groups[group_index[i]] = new_node
+                flattened = list(flatten_recursive(groups))
                 with graph_module.graph.inserting_before(node):
-                    new_node = graph_module.graph.call_module(
-                        "mlu_triton_slice_where_cat_replacement",
-                        args=(
-                            where_input,
-                            slice_input,
-                            zeros_param,
-                            unmatched_nodes,
-                            cat_dim,
-                            slice_dim,
-                            slice_params
-                        ),
+                    cat_node = graph_module.graph.call_function(
+                        torch.ops.aten.cat.default,
+                        args=(flattened, -1),
                     )
-
-                node.replace_all_uses_with(new_node)
+                node.replace_all_uses_with(cat_node)
                 graph_module.graph.erase_node(node)
                 is_modified = True
 
