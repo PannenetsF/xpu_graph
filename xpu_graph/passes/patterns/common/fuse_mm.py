@@ -69,7 +69,7 @@ def _is_mm_add(
 
 class FusedAddMM(Pattern):
     _opt_level = OptLevel.level2
-    _stages = [FxStage.inference, FxStage.forward, FxStage.pregrad]
+    _stages = [FxStage.forward, FxStage.pregrad]
 
     def process(self, graph_module: fx.GraphModule) -> bool:
         changed = False
