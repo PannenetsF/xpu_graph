@@ -3,6 +3,7 @@ import sys
 import time
 import functools
 import os
+import difflib
 
 import torch
 
@@ -83,7 +84,6 @@ def xpu_timer(func):
 
     return wrapper
 
-
 def get_nodes_statistics(gm: torch.fx.GraphModule) -> str:
     statistics = []
     statistics.append(f"Total nodes num: {len(gm.graph.nodes)}")
@@ -112,3 +112,29 @@ def get_nodes_statistics(gm: torch.fx.GraphModule) -> str:
     statistics_str = "\n".join(statistics)
 
     return statistics_str
+class GitLikeDiffer:
+    differ = difflib.Differ()
+
+    @classmethod
+    def diff(cls, lhs, rhs):
+        lhs = str(lhs).splitlines()
+        rhs = str(rhs).splitlines()
+        diff = cls.differ.compare(lhs, rhs)
+        result = []
+        is_diff = False
+        for line in diff:
+            if line.startswith("- "):
+                is_diff = True
+                # NOTE(liuyuan): Red for removals
+                result.append(f"\033[31m{line}\033[0m") 
+            elif line.startswith("+ "):
+                is_diff = True
+                # NOTE(liuyuan): Green for additions
+                result.append(f"\033[32m{line}\033[0m") 
+            elif line.startswith("? "):
+                # NOTE(liuyuan): Yellow for hints
+                result.append(f"\033[33m{line.strip()}\033[0m") 
+            else:
+                # TODO(liuyuan): Is this necessary? Maybe we should ignore it. Maybe.
+                result.append(line)
+        return '\n'.join(result) if is_diff else "\033[32mNo difference found!\033[0m"
