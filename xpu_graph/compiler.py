@@ -9,7 +9,7 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from .passes.pass_manager import PassManager
 from .passes.patterns.pattern import Pattern
 from .config import XpuGraphConfig, Target, OptLevel
-from .utils import logger, setup_logger, local_logger, get_nodes_statistics
+from .utils import logger, setup_logger, local_logger, get_nodes_statistics, GitLikeDiffer
 from .cache import XpuGraphCache, default_cache, SerializeWrapper
 from .fx_utils import FxStage, unlift_exported_gm, decompose_for_inductor
 import logging
@@ -91,6 +91,8 @@ class XpuGraph:
 
             with fake_mode:
                 with local_logger("before"):
+                    # NOTE(liuyuan): gm could be changed in the compiler, and we should keep the original graph for logging difference.
+                    original_gm_graph = gm.graph
                     logger.info(
                         f"before xpu_graph, nodes statistics: {get_nodes_statistics(gm)}"
                     )
@@ -98,7 +100,7 @@ class XpuGraph:
                     logger.info(f"xpu_graph passes start {stage}...")
 
                 if stage == FxStage.pregrad:
-                    logger.debug(f"before decompose: graph like:\n {gm.graph}")
+                    logger.debug(f"before decompose: graph like:\n {original_gm_graph}")
                     logger.info("decompose graph start...")
                     from torch.fx.experimental.proxy_tensor import make_fx
 
@@ -127,6 +129,9 @@ class XpuGraph:
                         f"after xpu_graph, nodes statistics: \n{get_nodes_statistics(xpu_compiled)}"
                     )
                     logger.debug(f"after xpu_graph, graph like:\n {xpu_compiled.graph}")
+                    logger.debug(
+                        f"Final difference after optimizations by xpu_graph:\n {GitLikeDiffer.diff(original_gm_graph, xpu_compiled.graph)}"
+                    )
 
                 if stage != FxStage.pregrad and self._config.vendor_compiler_config:
                     xpu_compiled = decompose_for_inductor(xpu_compiled, fake_inputs)
@@ -180,6 +185,7 @@ class XpuGraph:
             logger.info("aot_export_module complete")
             logger.debug(f"after aot_export_module, graph like:\n {exported_gm.graph}")
             logger.debug(f"graph signature: {gs}")
+            logger.debug(f"Difference:\n {GitLikeDiffer.diff(dynamo_gm.graph, exported_gm.graph)}")
 
             logger.info("unlift graph start...")
             logger.debug(f"before unlift, graph like:\n {exported_gm.graph}")
@@ -188,6 +194,7 @@ class XpuGraph:
             )
             logger.info("unlift graph complete")
             logger.debug(f"after unlift, graph like:\n {unlifted_gm.graph}")
+            logger.debug(f"Difference:\n {GitLikeDiffer.diff(exported_gm.graph, unlifted_gm.graph)}")
 
             xpu_gm = _staged_compiler(FxStage.inference)(unlifted_gm, example_inputs)
 
