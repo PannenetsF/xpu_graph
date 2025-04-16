@@ -594,8 +594,6 @@ class _attention(torch.autograd.Function):
         bias_stride_m = 1
         bias_stride_n = 1
         if ctx.HAS_BIAS:
-            if not expanded_bias:
-                bias = bias.unsqueeze(1)
             bias_stride_z = bias.stride(0)
             bias_stride_m = bias.stride(1)
             bias_stride_n = bias.stride(2)
