@@ -90,13 +90,6 @@ class XpuGraph:
             ]
 
             with fake_mode:
-                with local_logger("before"):
-                    logger.info(
-                        f"before xpu_graph, nodes statistics: {get_nodes_statistics(gm)}"
-                    )
-                    logger.debug(f"before xpu_graph, graph like:\n {gm.graph}")
-                    logger.info(f"xpu_graph passes start {stage}...")
-
                 if stage == FxStage.pregrad:
                     logger.debug(f"before decompose: graph like:\n {gm.graph}")
                     logger.info("decompose graph start...")
@@ -118,6 +111,13 @@ class XpuGraph:
                     cached_compiled = self._cache.load_gm(hashkey)
                     if cached_compiled is not None:
                         return cached_compiled
+
+                with local_logger("before"):
+                    logger.info(
+                        f"before xpu_graph, nodes statistics: \n{get_nodes_statistics(gm)}"
+                    )
+                    logger.debug(f"before xpu_graph, graph like:\n {gm.graph}")
+                    logger.info(f"xpu_graph passes start {stage}...")
 
                 xpu_compiled = self._pass_manager(gm, fake_inputs, stage)
 
